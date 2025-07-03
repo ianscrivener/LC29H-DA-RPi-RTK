@@ -19,33 +19,33 @@ load_dotenv()
 
 # ################################
 # VARIABLES
-SERIAL_PORT = os.getenv('SERIAL_PORT') or os.getenv('UART_PORT') or '/dev/ttyAMA0'
-BAUD_RATE = int(os.getenv('BAUD_RATE', '115200'))
-TCP_PORT = int(os.getenv('TCP_PORT', '10110'))
-TCP_HOST = os.getenv('TCP_HOST', 'localhost')
-TCP_MAX_CLIENTS = int(os.getenv('TCP_MAX_CLIENTS', '5'))
+SERIAL_PORT                 = os.getenv('SERIAL_PORT') or os.getenv('UART_PORT') or '/dev/ttyAMA0'
+BAUD_RATE                   = int(os.getenv('BAUD_RATE', '115200'))
+TCP_PORT                    = int(os.getenv('TCP_PORT', '10110'))
+TCP_HOST                    = os.getenv('TCP_HOST', 'localhost')
+TCP_MAX_CLIENTS             = int(os.getenv('TCP_MAX_CLIENTS', '5'))
 
-TCP_ALLOW = os.getenv('TCP_ALLOW', 'RMC,VTG,GGA')
-TCP_ALLOW_LIST = TCP_ALLOW.split(',')
+TCP_ALLOW                   = os.getenv('TCP_ALLOW', 'RMC,VTG,GGA')
+TCP_ALLOW_LIST              = TCP_ALLOW.split(',')
 
-TCP_ONLY_RTK_FIXED = os.getenv('TCP_ONLY_RTK_FIXED', 'false').lower() == 'true'
+TCP_ONLY_RTK_FIXED          = os.getenv('TCP_ONLY_RTK_FIXED', 'false').lower() == 'true'
 
-NTRIP_HOST = os.getenv('NTRIP_HOST')
-NTRIP_PORT = int(os.getenv('NTRIP_PORT', '2101'))
-NTRIP_MOUNTPOINT = os.getenv('NTRIP_MOUNTPOINT')
-NTRIP_USERNAME = os.getenv('NTRIP_USERNAME')
-NTRIP_PASSWORD = os.getenv('NTRIP_PASSWORD')
-NTRIP_USE_HTTPS = os.getenv('NTRIP_USE_HTTPS', 'false').lower() == 'true'
-NTRIP_USER_AGENT = os.getenv('NTRIP_USER_AGENT', 'PythonNTRIPClient')
+NTRIP_HOST                  = os.getenv('NTRIP_HOST')
+NTRIP_PORT                  = int(os.getenv('NTRIP_PORT', '2101'))
+NTRIP_MOUNTPOINT            = os.getenv('NTRIP_MOUNTPOINT')
+NTRIP_USERNAME              = os.getenv('NTRIP_USERNAME')
+NTRIP_PASSWORD              = os.getenv('NTRIP_PASSWORD')
+NTRIP_USE_HTTPS             = os.getenv('NTRIP_USE_HTTPS', 'false').lower() == 'true'
+NTRIP_USER_AGENT            = os.getenv('NTRIP_USER_AGENT', 'PythonNTRIPClient')
 
 # ################################
 # GLOBAL OBJECTS
-clients: List[socket.socket] = []
-latest_gga: Optional[Dict[str, Any]] = None
-serial_port: Optional[serial.Serial] = None
-tcp_server: Optional[socket.socket] = None
-ntrip_session: Optional[requests.Session] = None
-shutdown_event = threading.Event()
+clients: List[socket.socket]                = []
+latest_gga: Optional[Dict[str, Any]]        = None
+serial_port: Optional[serial.Serial]        = None
+tcp_server: Optional[socket.socket]         = None
+ntrip_session: Optional[requests.Session]   = None
+shutdown_event                              = threading.Event()
 
 # ################################
 # HELPER FUNCTIONS
