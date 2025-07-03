@@ -3,7 +3,7 @@ import net from 'net';
 
 // Read TCP settings from environment variables
 // const TCP_HOST = process.env.TCP_HOST || 'rpi4.local'; // Default to 'rpi4.local' if not set
-const TCP_HOST = 'rpi4.local'; 
+const TCP_HOST = 'rpi0.local'; 
 const TCP_PORT = parseInt(process.env.TCP_PORT, 10) || 10110;
 
 // Object to hold counts of each NMEA sentence type

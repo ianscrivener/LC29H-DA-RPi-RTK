@@ -1,9 +1,0 @@
-nc localhost 10112 | awk -F',' '/\$GNGGA/ { 
-    lat=$3; lon=$5;
-    lat_dd = int(lat/100) + (lat-int(lat/100)*100)/60;
-    lon_dd = int(lon/100) + (lon-int(lon/100)*100)/60;
-    if($4=="S") lat_dd=-lat_dd;
-    if($6=="W") lon_dd=-lon_dd;
-    printf "%.6f,%.6f\n", lat_dd, lon_dd
-}'
-

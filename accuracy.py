@@ -2,6 +2,17 @@ import socket
 import pynmea2
 import math
 
+# Variables
+TCP_IP          = 'rpi0.local'
+TCP_PORT        = 10112  
+
+
+# Initialize origin and previous coordinates
+origin_lat = origin_lon = None
+prev_lat = prev_lon = None
+
+
+# helper functions
 def haversine(lat1, lon1, lat2, lon2):
     # Convert decimal degrees to radians
     lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
@@ -11,13 +22,8 @@ def haversine(lat1, lon1, lat2, lon2):
     a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
     c = 2 * math.asin(math.sqrt(a))
     r = 6371000  # Earth radius in meters
-    return c * r
+    return c * r * 100
 
-TCP_IP = 'localhost'
-TCP_PORT = 10112  # Replace with your TCP port
-
-origin_lat = origin_lon = None
-prev_lat = prev_lon = None
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.connect((TCP_IP, TCP_PORT))
@@ -41,8 +47,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     # Distance from origin point
                     dist_origin = haversine(origin_lat, origin_lon, lat, lon)
 
-                    print(f"Moved {dist_prev:.2f} meters from previous point.")
-                    print(f"Distance from origin: {dist_origin:.2f} meters.")
+                    print(f" {dist_prev:.2f} ~ {dist_origin:.2f} - previous ~ origin distance in centimetres.")
 
                     prev_lat, prev_lon = lat, lon
 

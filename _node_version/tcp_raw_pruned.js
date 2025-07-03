@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import net from 'net';
 
-const TCP_HOST = 'rpi4.local';
+const TCP_HOST = 'rpi0.local';
 const TCP_PORT = parseInt(process.env.TCP_PORT, 10) || 10112;
 
 // Load ESSENTIAL_NMEA_TAGS from .env and convert wildcards to regex
