@@ -16,11 +16,10 @@ const TCP_PORT                  = parseInt(process.env.TCP_PORT, 10) || 10110;
 const TCP_HOST                  = process.env.TCP_HOST || 'localhost';
 const TCP_MAX_CLIENTS           = parseInt(process.env.TCP_MAX_CLIENTS, 10) || 5;
 
-const TCP_SKIP                  = process.env.TCP_SKIP || ''
-const TCP_SKIP_LIST             = TCP_SKIP.split(',')
+const TCP_ALLOW                 = process.env.TCP_ALLOW || 'RMC,VTG,GGA'
+const TCP_ALLOW_LIST            = TCP_ALLOW.split(',')
 
-const TCP_SEND                  = process.env.TCP_SEND || 'RMC,VTG,GGA'
-const TCP_SEND_LIST             = TCP_SEND.split(',')
+const TCP_ONLY_RTK_FIXED        = process.env.TCP_ONLY_RTK_FIXED === 'true' || false;
 
 const NTRIP_HOST                = process.env.NTRIP_HOST;
 const NTRIP_PORT                = parseInt(process.env.NTRIP_PORT, 10) || 2101;
@@ -252,19 +251,17 @@ tcp_nmea_server.listen(TCP_PORT, () => {
 
 
 
-
+// #################################################################
 // ################################
 // NMEA Serial stream events
 serial_stream.on('data', data => {
 
     let NMEA_SUFFIX    = data.substring(0, 6).substring(3, 6);
 
-    // skip sentences based on TCP_SKIP environment variable
-    if (!TCP_SEND_LIST.includes(NMEA_SUFFIX)) {
+    // skip NMEA messages n NOT in our allow list
+    if (!TCP_ALLOW_LIST.includes(NMEA_SUFFIX)) {
         return; // Skip this sentence
     }
-
-
 
     if (data.startsWith('$GPGGA') || data.startsWith('$GNGGA')) {
         const gga = parseGGA(data);
@@ -273,6 +270,25 @@ serial_stream.on('data', data => {
             latestGGA = gga;
         }
     }
+
+    // Only RTK Fixed if TCP_ONLY_RTK_FIXED===true
+    if(TCP_ONLY_RTK_FIXED){
+        if (data.startsWith('$GNGGA') || data.startsWith('$GPGGA')) {
+            const fields = data.split(',');
+            if (fields.length > 6 && fields[6] !== '4') {  // RTK fixed
+                return; // Skip if not RTK fixed
+            }
+        }
+        if (data.startsWith('$GNRMC') || data.startsWith('$GPRMC')) {
+            const fields = data.split(',');
+            if (fields.length > 12 && fields[12] !== 'R') {  // RTK fixed
+                return; // Skip if not RTK fixed
+            }
+        }
+    }
+
+
+
     clients.forEach(socket => {
         if (socket.writable) socket.write(data + '\n');
     });
