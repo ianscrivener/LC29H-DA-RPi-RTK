@@ -1,13 +1,17 @@
 # RKT Corrections for LC29H(DA)
 
 
-## Install
+## Install the python code 
 ```
+cd ~/
+git clone git@github.com:ianscrivener/LC29H-DA-RPi-RTK.git rtk
+cd rtk
+
 sudo pip install -r requirements.txt
 ```
 
 
-## SetUp systemd
+## Setup systemd to run the python script as a Raspberry Pi service
 
 ```
 chmod +x /home/pi/rtk/main.py
@@ -30,8 +34,16 @@ WorkingDirectory=/home/pi/rtk
 ExecStart=/usr/bin/python3 /home/pi/rtk/main.py
 Restart=always
 RestartSec=10
-StandardOutput=journal
+# StandardOutput=journal
+
+# Disable the python app console output 
+StandardOutput=null   
+
+# Though still log errors
 StandardError=journal
+
+# Log only errors
+LogLevel=err
 
 # Allow access to serial ports
 SupplementaryGroups=dialout
@@ -40,6 +52,8 @@ SupplementaryGroups=dialout
 WantedBy=multi-user.target
 
 ```
+
+
 
 **Enable and start the systmd service**
 
@@ -84,3 +98,11 @@ sudo systemctl disable rtk-python
 # Check if enabled
 sudo systemctl is-enabled rtk-python
 ```
+
+
+
+--- 
+
+### Testing
+
+There are some node.js testing scripts in _node_testing 
