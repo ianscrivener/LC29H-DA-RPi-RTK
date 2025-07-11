@@ -46,6 +46,7 @@ LOG_WRITE_PERIOD            = int(os.getenv('LOG_WRITE_PERIOD', '180'))
 # ################################
 # GLOBAL OBJECTS
 clients: List[socket.socket]                = []
+clients_lock                               = threading.Lock()  # Thread safety for clients
 latest_gga: Optional[Dict[str, Any]]        = None
 latest_rmc: Optional[Dict[str, Any]]        = None
 utc_date: str                               = datetime.now(timezone.utc).strftime('%Y-%m-%d')
@@ -105,8 +106,6 @@ class LightweightGPSLogger:
             # Fall back to system time if no GPS time
             timestamp = datetime.now(timezone.utc).isoformat()
         
-        # Create WKT POINT string
-        geometry_wkt = f"POINT({lon} {lat})" if lat and lon else ""
         
         with self.buffer_lock:
             self.buffer.append({
@@ -114,8 +113,7 @@ class LightweightGPSLogger:
                 'latitude': lat if lat else "",
                 'longitude': lon if lon else "",
                 'fix_quality': int(fix_quality) if fix_quality else 0,
-                'satellite_count': sat_count if sat_count else 0,
-                'geometry_wkt': geometry_wkt
+                'satellite_count': sat_count if sat_count else 0
             })
 
     def _background_writer(self):
@@ -136,7 +134,7 @@ class LightweightGPSLogger:
         try:
             with open(self.filename, 'a') as f:
                 for point in data_to_write:
-                    line = f"{point['gps_datetime']},{point['latitude']},{point['longitude']},{point['fix_quality']},{point['satellite_count']},{point['geometry_wkt']}\n"
+                    line = f"{point['gps_datetime']},{point['latitude']},{point['longitude']},{point['fix_quality']},{point['satellite_count']},{point.get('geometry_wkt','')}\n"
                     f.write(line)
             
             print(f"{datetime.now()}: Wrote {len(data_to_write)} GPS points to {self.filename}")
@@ -398,8 +396,9 @@ def handle_client(client_socket: socket.socket, address: str):
         except:
             pass
         
-        if client_socket in clients:
-            clients.remove(client_socket)
+        with clients_lock:
+            if client_socket in clients:
+                clients.remove(client_socket)
         
         print(f"Client {clean_address(address)} disconnected")
 
@@ -423,12 +422,14 @@ def start_tcp_server():
                 try:
                     client_socket, address = tcp_server.accept()
                     
-                    if len(clients) >= TCP_MAX_CLIENTS:
-                        print(f"Max clients reached, rejecting {clean_address(address[0])}")
-                        client_socket.close()
-                        continue
+                    with clients_lock:
+                        if len(clients) >= TCP_MAX_CLIENTS:
+                            print(f"Max clients reached, rejecting {clean_address(address[0])}")
+                            client_socket.close()
+                            continue
+                        
+                        clients.append(client_socket)
                     
-                    clients.append(client_socket)
                     threading.Thread(
                         target=handle_client, 
                         args=(client_socket, address[0]), 
@@ -450,6 +451,29 @@ def start_tcp_server():
                 tcp_server.close()
     
     threading.Thread(target=tcp_worker, daemon=True).start()
+
+def broadcast_to_clients(data: bytes):
+    """Send data to all connected TCP clients"""
+    with clients_lock:
+        if not clients:
+            return
+        
+        disconnected = []
+        
+        for client in clients:
+            try:
+                client.send(data)
+            except Exception:
+                disconnected.append(client)
+        
+        # Remove disconnected clients
+        for client in disconnected:
+            if client in clients:
+                clients.remove(client)
+            try:
+                client.close()
+            except:
+                pass
 
 # ################################
 # SERIAL PROCESSING
@@ -476,28 +500,6 @@ def should_send_sentence(sentence: str) -> bool:
             return False
     
     return True
-
-def broadcast_to_clients(data: bytes):
-    """Send data to all connected TCP clients"""
-    if not clients:
-        return
-    
-    disconnected = []
-    
-    for client in clients:
-        try:
-            client.send(data)
-        except Exception:
-            disconnected.append(client)
-    
-    # Remove disconnected clients
-    for client in disconnected:
-        if client in clients:
-            clients.remove(client)
-        try:
-            client.close()
-        except:
-            pass
 
 def process_serial_data():
     """Main serial data processing loop"""
@@ -616,11 +618,12 @@ def main():
     shutdown_event.set()
     
     # Close all client connections
-    for client in clients[:]:
-        try:
-            client.close()
-        except:
-            pass
+    with clients_lock:
+        for client in clients[:]:
+            try:
+                client.close()
+            except:
+                pass
     
     # Close TCP server
     if tcp_server:
@@ -633,4 +636,3 @@ def main():
     print("Shutdown complete")
 
 if __name__ == "__main__":
-    main()
