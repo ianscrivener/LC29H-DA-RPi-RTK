@@ -134,7 +134,7 @@ class LightweightGPSLogger:
         try:
             with open(self.filename, 'a') as f:
                 for point in data_to_write:
-                    line = f"{point['gps_datetime']},{point['latitude']},{point['longitude']},{point['fix_quality']},{point['satellite_count']},{point.get('geometry_wkt','')}\n"
+                    line = f"{point['gps_datetime']},{point['latitude']},{point['longitude']},{point['fix_quality']},{point['satellite_count']}\n"
                     f.write(line)
             
             print(f"{datetime.now()}: Wrote {len(data_to_write)} GPS points to {self.filename}")
