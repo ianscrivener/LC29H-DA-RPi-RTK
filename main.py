@@ -48,6 +48,7 @@ LOG_WRITE_PERIOD            = int(os.getenv('LOG_WRITE_PERIOD', '180'))
 clients: List[socket.socket]                = []
 latest_gga: Optional[Dict[str, Any]]        = None
 latest_rmc: Optional[Dict[str, Any]]        = None
+utc_date: str                               = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 serial_port: Optional[serial.Serial]        = None
 tcp_server: Optional[socket.socket]         = None
 ntrip_session: Optional[requests.Session]   = None
@@ -74,12 +75,31 @@ class LightweightGPSLogger:
         
         print(f"GPS Logger started. Data -> {filename} every {write_interval}s")
 
-    def append_gps_point(self, lat: float, lon: float, fix_quality: int, sat_count: int, gps_datetime: str = None):
+    def append_gps_point(self, lat: float, lon: float, fix_quality: int, sat_count: int, gps_time: str = None):
         """Buffer GPS data point"""
-        # Use GPS datetime if available, otherwise fall back to system time
-        if gps_datetime:
-            timestamp = gps_datetime
+        global utc_date
+        
+        # Create full datetime from UTC date and GPS time
+        if gps_time and len(gps_time) >= 6:
+            try:
+                hours = int(gps_time[:2])
+                minutes = int(gps_time[2:4])
+                seconds = float(gps_time[4:])
+                
+                # Combine UTC date with GPS time
+                dt = datetime.strptime(utc_date, '%Y-%m-%d').replace(
+                    hour=hours,
+                    minute=minutes,
+                    second=int(seconds),
+                    microsecond=int((seconds % 1) * 1000000),
+                    tzinfo=timezone.utc
+                )
+                timestamp = dt.isoformat()
+            except (ValueError, IndexError):
+                # Fall back to system time if GPS time parsing fails
+                timestamp = datetime.now(timezone.utc).isoformat()
         else:
+            # Fall back to system time if no GPS time
             timestamp = datetime.now(timezone.utc).isoformat()
         
         # Create WKT POINT string
@@ -213,11 +233,24 @@ def parse_gga(sentence: str) -> Optional[Dict[str, Any]]:
 
 def parse_rmc(sentence: str) -> Optional[Dict[str, Any]]:
     """Parse RMC NMEA sentence for date/time"""
+    global utc_date
+    
     parts = sentence.split(',')
     if len(parts) < 10:
         return None
     
     try:
+        # Update global UTC date if we have valid date
+        if parts[9] and len(parts[9]) == 6:
+            day = int(parts[9][:2])
+            month = int(parts[9][2:4])
+            year = 2000 + int(parts[9][4:])  # Assume 20xx
+            new_date = f"{year:04d}-{month:02d}-{day:02d}"
+            
+            if new_date != utc_date:
+                utc_date = new_date
+                print(f"Updated UTC date from GPS: {utc_date}")
+        
         return {
             'time': parts[1],
             'status': parts[2],
