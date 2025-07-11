@@ -9,9 +9,7 @@ import socket
 import serial
 import requests
 import base64
-import pyarrow as pa
-import pyarrow.parquet as pq
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
 # Load environment variables from .env file
@@ -42,38 +40,33 @@ NTRIP_PASSWORD              = os.getenv('NTRIP_PASSWORD')
 NTRIP_USE_HTTPS             = os.getenv('NTRIP_USE_HTTPS', 'false').lower() == 'true'
 NTRIP_USER_AGENT            = os.getenv('NTRIP_USER_AGENT', 'PythonNTRIPClient')
 
-PARQUET_LOG                 = os.getenv('PARQUET_LOG', 'rtk_log.parquet')
-PARQUET_WRITE_PERIOD        = int(os.getenv('PARQUET_WRITE_PERIOD', '180'))
+LOG_FILE                    = os.getenv('LOG_FILE', 'rtk_log.csv')
+LOG_WRITE_PERIOD            = int(os.getenv('LOG_WRITE_PERIOD', '180'))
 
 # ################################
 # GLOBAL OBJECTS
 clients: List[socket.socket]                = []
 latest_gga: Optional[Dict[str, Any]]        = None
+latest_rmc: Optional[Dict[str, Any]]        = None
 serial_port: Optional[serial.Serial]        = None
 tcp_server: Optional[socket.socket]         = None
 ntrip_session: Optional[requests.Session]   = None
 shutdown_event                              = threading.Event()
 
 # ################################
-# PYARROW GPS LOGGING CLASS
+# TEXT FILE GPS LOGGING CLASS
 
 class LightweightGPSLogger:
-    def __init__(self, filename='rtk_log.parquet', write_interval=180):
+    def __init__(self, filename='rtk_log.txt', write_interval=180):
         self.filename = filename
         self.write_interval = write_interval
         self.buffer = []
         self.buffer_lock = threading.Lock()
         
-        # Define schema for consistent parquet structure
-        self.schema = pa.schema([
-            ('timestamp', pa.timestamp('us', tz='UTC')),
-            ('latitude', pa.float64()),
-            ('longitude', pa.float64()),
-            ('fix_quality', pa.int8()),
-            ('satellite_count', pa.uint8()),
-            # Store geometry as WKT string instead of binary
-            ('geometry_wkt', pa.string())
-        ])
+        # Create header if file doesn't exist
+        if not os.path.exists(self.filename):
+            with open(self.filename, 'w') as f:
+                f.write("gps_datetime,latitude,longitude,fix_quality,satellite_count,geometry_wkt\n")
         
         # Start background writer thread
         self.writer_thread = threading.Thread(target=self._background_writer, daemon=True)
@@ -81,20 +74,24 @@ class LightweightGPSLogger:
         
         print(f"GPS Logger started. Data -> {filename} every {write_interval}s")
 
-    def append_gps_point(self, lat: float, lon: float, fix_quality: int, sat_count: int):
+    def append_gps_point(self, lat: float, lon: float, fix_quality: int, sat_count: int, gps_datetime: str = None):
         """Buffer GPS data point"""
-        timestamp = datetime.now(datetime.timezone.utc)
+        # Use GPS datetime if available, otherwise fall back to system time
+        if gps_datetime:
+            timestamp = gps_datetime
+        else:
+            timestamp = datetime.now(timezone.utc).isoformat()
         
-        # Create WKT POINT string instead of Shapely geometry
-        geometry_wkt = f"POINT({lon} {lat})" if lat and lon else None
+        # Create WKT POINT string
+        geometry_wkt = f"POINT({lon} {lat})" if lat and lon else ""
         
         with self.buffer_lock:
             self.buffer.append({
-                'timestamp': timestamp,
-                'latitude': lat,
-                'longitude': lon,
+                'gps_datetime': timestamp,
+                'latitude': lat if lat else "",
+                'longitude': lon if lon else "",
                 'fix_quality': int(fix_quality) if fix_quality else 0,
-                'satellite_count': sat_count,
+                'satellite_count': sat_count if sat_count else 0,
                 'geometry_wkt': geometry_wkt
             })
 
@@ -105,7 +102,7 @@ class LightweightGPSLogger:
             self._write_buffer_to_file()
 
     def _write_buffer_to_file(self):
-        """Write buffered data to Parquet file"""
+        """Write buffered data to text file"""
         with self.buffer_lock:
             if not self.buffer:
                 return
@@ -114,22 +111,15 @@ class LightweightGPSLogger:
             self.buffer.clear()
 
         try:
-            # Convert to PyArrow table
-            table = pa.table(data_to_write, schema=self.schema)
-            
-            # Append to existing file or create new one
-            if os.path.exists(self.filename):
-                # Read existing data and concatenate
-                existing_table = pq.read_table(self.filename)
-                combined_table = pa.concat_tables([existing_table, table])
-                pq.write_table(combined_table, self.filename)
-            else:
-                pq.write_table(table, self.filename)
+            with open(self.filename, 'a') as f:
+                for point in data_to_write:
+                    line = f"{point['gps_datetime']},{point['latitude']},{point['longitude']},{point['fix_quality']},{point['satellite_count']},{point['geometry_wkt']}\n"
+                    f.write(line)
             
             print(f"{datetime.now()}: Wrote {len(data_to_write)} GPS points to {self.filename}")
             
         except Exception as e:
-            print(f"Error writing to parquet: {e}")
+            print(f"Error writing to text file: {e}")
             # Put data back in buffer on error
             with self.buffer_lock:
                 self.buffer.extend(data_to_write)
@@ -139,10 +129,12 @@ class LightweightGPSLogger:
         self._write_buffer_to_file()
 
     def read_data(self):
-        """Read all data from parquet file"""
-        if os.path.exists(self.filename):
-            return pq.read_table(self.filename).to_pandas()
-        return None
+        """Read all data from text file"""
+        try:
+            with open(self.filename, 'r') as f:
+                return f.read()
+        except FileNotFoundError:
+            return None
 
 # ################################
 # HELPER FUNCTIONS
@@ -171,6 +163,36 @@ def parse_nmea_coord(coord: str, direction: str) -> Optional[float]:
     except (ValueError, IndexError):
         return None
 
+def parse_nmea_time_date(time_str: str, date_str: str) -> Optional[str]:
+    """Parse NMEA time and date into ISO format"""
+    if not time_str or not date_str:
+        return None
+    
+    try:
+        # Parse time (HHMMSS.sss)
+        if len(time_str) >= 6:
+            hours = int(time_str[:2])
+            minutes = int(time_str[2:4])
+            seconds = float(time_str[4:])
+        else:
+            return None
+        
+        # Parse date (DDMMYY)
+        if len(date_str) == 6:
+            day = int(date_str[:2])
+            month = int(date_str[2:4])
+            year = 2000 + int(date_str[4:])  # Assume 20xx
+        else:
+            return None
+        
+        # Create datetime object
+        dt = datetime(year, month, day, hours, minutes, int(seconds), 
+                     int((seconds % 1) * 1000000), timezone.utc)
+        return dt.isoformat()
+        
+    except (ValueError, IndexError):
+        return None
+
 def parse_gga(sentence: str) -> Optional[Dict[str, Any]]:
     """Parse GGA NMEA sentence"""
     parts = sentence.split(',')
@@ -184,6 +206,24 @@ def parse_gga(sentence: str) -> Optional[Dict[str, Any]]:
             'fix': parts[6],
             'time': parts[1],
             'sats': int(parts[7]) if parts[7] else 0,
+            'raw': sentence
+        }
+    except (ValueError, IndexError):
+        return None
+
+def parse_rmc(sentence: str) -> Optional[Dict[str, Any]]:
+    """Parse RMC NMEA sentence for date/time"""
+    parts = sentence.split(',')
+    if len(parts) < 10:
+        return None
+    
+    try:
+        return {
+            'time': parts[1],
+            'status': parts[2],
+            'lat': parse_nmea_coord(parts[3], parts[4]),
+            'lon': parse_nmea_coord(parts[5], parts[6]),
+            'date': parts[9],
             'raw': sentence
         }
     except (ValueError, IndexError):
@@ -204,6 +244,13 @@ def get_fix_status(fix: str) -> str:
     }
     return status_map.get(fix, 'Unknown')
 
+def get_gps_datetime() -> Optional[str]:
+    """Get GPS datetime from latest RMC data"""
+    global latest_rmc
+    if latest_rmc and latest_rmc.get('time') and latest_rmc.get('date'):
+        return parse_nmea_time_date(latest_rmc['time'], latest_rmc['date'])
+    return None
+
 # ################################
 # NTRIP CLIENT
 
@@ -222,4 +269,295 @@ def start_ntrip_stream():
                 
                 # Prepare authentication
                 auth_string = f"{NTRIP_USERNAME}:{NTRIP_PASSWORD}"
-                auth_encoded = base64.b64encode(auth_string.encode()).
+                auth_encoded = base64.b64encode(auth_string.encode()).decode()
+                
+                # Build URL
+                protocol = 'https' if NTRIP_USE_HTTPS else 'http'
+                url = f"{protocol}://{NTRIP_HOST}:{NTRIP_PORT}/{NTRIP_MOUNTPOINT}"
+                
+                headers = {
+                    'User-Agent': NTRIP_USER_AGENT,
+                    'Authorization': f'Basic {auth_encoded}'
+                }
+                
+                print(f"Connecting to NTRIP: {url}")
+                
+                response = ntrip_session.get(url, headers=headers, stream=True, timeout=10)
+                response.raise_for_status()
+                
+                print("NTRIP stream connected")
+                
+                for chunk in response.iter_content(chunk_size=1024):
+                    if shutdown_event.is_set():
+                        break
+                    
+                    if chunk and serial_port:
+                        try:
+                            serial_port.write(chunk)
+                        except Exception as e:
+                            print(f"Error writing NTRIP data to serial: {e}")
+                            break
+                            
+            except Exception as e:
+                print(f"NTRIP error: {e}")
+                time.sleep(5)  # Wait before retry
+        
+        if ntrip_session:
+            ntrip_session.close()
+    
+    threading.Thread(target=ntrip_worker, daemon=True).start()
+
+# ################################
+# TCP SERVER
+
+def handle_client(client_socket: socket.socket, address: str):
+    """Handle individual TCP client"""
+    print(f"Client connected from {clean_address(address)}")
+    
+    try:
+        while not shutdown_event.is_set():
+            time.sleep(0.1)  # Prevent busy loop
+    except Exception as e:
+        print(f"Client {clean_address(address)} error: {e}")
+    finally:
+        try:
+            client_socket.close()
+        except:
+            pass
+        
+        if client_socket in clients:
+            clients.remove(client_socket)
+        
+        print(f"Client {clean_address(address)} disconnected")
+
+def start_tcp_server():
+    """Start TCP server in a separate thread"""
+    global tcp_server
+    
+    def tcp_worker():
+        global tcp_server
+        
+        try:
+            tcp_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            tcp_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            tcp_server.bind((TCP_HOST, TCP_PORT))
+            tcp_server.listen(TCP_MAX_CLIENTS)
+            tcp_server.settimeout(1.0)
+            
+            print(f"TCP server listening on {TCP_HOST}:{TCP_PORT}")
+            
+            while not shutdown_event.is_set():
+                try:
+                    client_socket, address = tcp_server.accept()
+                    
+                    if len(clients) >= TCP_MAX_CLIENTS:
+                        print(f"Max clients reached, rejecting {clean_address(address[0])}")
+                        client_socket.close()
+                        continue
+                    
+                    clients.append(client_socket)
+                    threading.Thread(
+                        target=handle_client, 
+                        args=(client_socket, address[0]), 
+                        daemon=True
+                    ).start()
+                    
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    if not shutdown_event.is_set():
+                        print(f"TCP server error: {e}")
+                    break
+        
+        except Exception as e:
+            print(f"Failed to start TCP server: {e}")
+        
+        finally:
+            if tcp_server:
+                tcp_server.close()
+    
+    threading.Thread(target=tcp_worker, daemon=True).start()
+
+# ################################
+# SERIAL PROCESSING
+
+def should_send_sentence(sentence: str) -> bool:
+    """Check if sentence should be sent to TCP clients"""
+    if not sentence.startswith('$'):
+        return False
+    
+    # Extract sentence type (e.g., GNGGA, GNRMC, etc.)
+    parts = sentence.split(',')
+    if len(parts) < 1:
+        return False
+    
+    sentence_type = parts[0][3:]  # Remove $GN prefix
+    
+    if sentence_type not in TCP_ALLOW_LIST:
+        return False
+    
+    # If RTK-only mode is enabled, only send RTK fixed positions
+    if TCP_ONLY_RTK_FIXED and sentence_type == 'GGA':
+        gga_data = parse_gga(sentence)
+        if not gga_data or gga_data.get('fix') != '4':
+            return False
+    
+    return True
+
+def broadcast_to_clients(data: bytes):
+    """Send data to all connected TCP clients"""
+    if not clients:
+        return
+    
+    disconnected = []
+    
+    for client in clients:
+        try:
+            client.send(data)
+        except Exception:
+            disconnected.append(client)
+    
+    # Remove disconnected clients
+    for client in disconnected:
+        if client in clients:
+            clients.remove(client)
+        try:
+            client.close()
+        except:
+            pass
+
+def process_serial_data():
+    """Main serial data processing loop"""
+    global latest_gga, latest_rmc, serial_port
+    
+    # Initialize GPS logger
+    gps_logger = LightweightGPSLogger(LOG_FILE, LOG_WRITE_PERIOD)
+    
+    buffer = ""
+    
+    print(f"Starting serial processing on {SERIAL_PORT} at {BAUD_RATE} baud")
+    
+    try:
+        serial_port = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+        print(f"Serial port {SERIAL_PORT} opened successfully")
+        
+        while not shutdown_event.is_set():
+            try:
+                data = serial_port.read(1024)
+                if not data:
+                    continue
+                
+                buffer += data.decode('utf-8', errors='ignore')
+                
+                # Process complete sentences
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    sentence = line.strip()
+                    
+                    if not sentence:
+                        continue
+                    
+                    # Parse GGA sentences for position logging
+                    if sentence.startswith('$') and 'GGA' in sentence:
+                        gga_data = parse_gga(sentence)
+                        if gga_data:
+                            latest_gga = gga_data
+                            
+                            # Get GPS datetime from latest RMC
+                            gps_datetime = get_gps_datetime()
+                            
+                            # Log position data
+                            if gga_data.get('lat') and gga_data.get('lon'):
+                                gps_logger.append_gps_point(
+                                    lat=gga_data['lat'],
+                                    lon=gga_data['lon'],
+                                    fix_quality=int(gga_data.get('fix', 0)),
+                                    sat_count=gga_data.get('sats', 0),
+                                    gps_datetime=gps_datetime
+                                )
+                            
+                            # Status output
+                            fix_status = get_fix_status(gga_data.get('fix', '0'))
+                            print(f"GPS: {gga_data.get('lat', 'N/A'):.6f}, "
+                                  f"{gga_data.get('lon', 'N/A'):.6f} | "
+                                  f"{fix_status} | {gga_data.get('sats', 0)} sats")
+                    
+                    # Parse RMC sentences for date/time
+                    elif sentence.startswith('$') and 'RMC' in sentence:
+                        rmc_data = parse_rmc(sentence)
+                        if rmc_data:
+                            latest_rmc = rmc_data
+                    
+                    # Broadcast allowed sentences to TCP clients
+                    if should_send_sentence(sentence):
+                        broadcast_to_clients((sentence + '\r\n').encode())
+                        
+            except Exception as e:
+                print(f"Serial processing error: {e}")
+                time.sleep(1)
+                
+    except Exception as e:
+        print(f"Failed to open serial port {SERIAL_PORT}: {e}")
+        return
+    
+    finally:
+        if serial_port:
+            serial_port.close()
+        
+        # Force write any remaining GPS data
+        gps_logger.force_write()
+
+# ################################
+# SIGNAL HANDLERS
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals"""
+    print(f"\nReceived signal {signum}, shutting down...")
+    shutdown_event.set()
+
+# ################################
+# MAIN
+
+def main():
+    """Main function"""
+    print("RTK GPS Bridge Starting...")
+    print(f"Serial: {SERIAL_PORT} @ {BAUD_RATE} baud")
+    print(f"TCP Server: {TCP_HOST}:{TCP_PORT}")
+    print(f"GPS Log: {LOG_FILE}")
+    
+    # Set up signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Start services
+    start_tcp_server()
+    start_ntrip_stream()
+    
+    # Main processing loop
+    try:
+        process_serial_data()
+    except KeyboardInterrupt:
+        print("\nKeyboard interrupt received")
+    
+    # Cleanup
+    shutdown_event.set()
+    
+    # Close all client connections
+    for client in clients[:]:
+        try:
+            client.close()
+        except:
+            pass
+    
+    # Close TCP server
+    if tcp_server:
+        tcp_server.close()
+    
+    # Close NTRIP session
+    if ntrip_session:
+        ntrip_session.close()
+    
+    print("Shutdown complete")
+
+if __name__ == "__main__":
+    main()
