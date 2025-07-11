@@ -68,7 +68,7 @@ class LightweightGPSLogger:
         # Create header if file doesn't exist
         if not os.path.exists(self.filename):
             with open(self.filename, 'w') as f:
-                f.write("gps_datetime,latitude,longitude,fix_quality,satellite_count,geometry_wkt\n")
+                f.write("gps_datetime,latitude,longitude,fix_quality,satellite_count\n")
         
         # Start background writer thread
         self.writer_thread = threading.Thread(target=self._background_writer, daemon=True)

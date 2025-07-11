@@ -1,7 +1,7 @@
 # To Do
 
-- roll text lkog file evey day
-- send log file to S3 on DigitalOcean
+- ~~roll text log file evey day~~
+- ~~send log file to S3 on DigitalOcean~~
 
 
 ---
