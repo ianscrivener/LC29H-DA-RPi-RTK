@@ -2,9 +2,9 @@ pyserial>=3.4
 requests>=2.25.1
 python-dotenv>=1.1.1
 
-
-
-pandas
 pyarrow
-geopandas
-shapely
+
+# pandas
+# pyarrow
+# geopandas
+# shapely
