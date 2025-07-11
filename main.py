@@ -12,6 +12,12 @@ import base64
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
+import geopandas as gpd
+import pandas as pd
+from shapely.geometry import Point
+import threading
+
+
 # Load environment variables from .env file
 from dotenv import load_dotenv
 load_dotenv()
@@ -38,6 +44,10 @@ NTRIP_PASSWORD              = os.getenv('NTRIP_PASSWORD')
 NTRIP_USE_HTTPS             = os.getenv('NTRIP_USE_HTTPS', 'false').lower() == 'true'
 NTRIP_USER_AGENT            = os.getenv('NTRIP_USER_AGENT', 'PythonNTRIPClient')
 
+PARQUET_LOG                 = os.getenv('PARQUET_LOG','rtk_log.parquet')
+PARQUET_WRITE_PERIOD        = os.getenv('PARQUET_WRITE_PERIOD',180)
+
+
 # ################################
 # GLOBAL OBJECTS
 clients: List[socket.socket]                = []
@@ -46,6 +56,87 @@ serial_port: Optional[serial.Serial]        = None
 tcp_server: Optional[socket.socket]         = None
 ntrip_session: Optional[requests.Session]   = None
 shutdown_event                              = threading.Event()
+
+
+
+# ################################
+# GEOPARQUET LOGGINF FUNCTIONS
+# logger.append_gps_point(lat, lon, fix_quality, sat_count)
+class GPSLogger:
+    def __init__(self):        
+        self.filename = PARQUET_LOG
+        self.write_interval = PARQUET_WRITE_PERIOD
+        self.buffer = []
+        self.buffer_lock = threading.Lock()
+        self.last_write_time = time.time()
+        
+        # Start background writer thread
+        self.writer_thread = threading.Thread(target=self._background_writer, daemon=True)
+        self.writer_thread.start()
+
+        print("GPS Logger started. Call logger.append_gps_point() from your RTK process.")
+        print("Data will be written to file every 180 seconds.")
+
+
+    def append_gps_point(self, lat, lon, fix_quality, sat_count):
+        """Called by external process every second to buffer GPS data"""
+        timestamp = datetime.now(datetime.timezone.utc)
+        
+        with self.buffer_lock:
+            self.buffer.append({
+                'timestamp': timestamp,
+                'fix': fix_quality,
+                'satellite_count': sat_count,
+                'latitude': lat,
+                'longitude': lon
+            })
+    
+    def _background_writer(self):
+        """Background thread that writes buffered data every 180 seconds"""
+        while True:
+            time.sleep(self.write_interval)
+            self._write_buffer_to_file()
+    
+    def _write_buffer_to_file(self):
+        """Write all buffered data to GeoParquet file"""
+        with self.buffer_lock:
+            if not self.buffer:
+                return
+            
+            # Create points from buffered data
+            data_to_write = []
+            for record in self.buffer:
+                point = Point(record['longitude'], record['latitude'])
+                data_to_write.append({
+                    'timestamp': record['timestamp'],
+                    'fix': record['fix'],
+                    'satellite_count': record['satellite_count'],
+                    'geometry': point
+                })
+            
+            # Clear buffer
+            self.buffer.clear()
+        
+        # Create GeoDataFrame
+        gdf = gpd.GeoDataFrame(data_to_write, crs='EPSG:4326')
+        gdf['fix'] = gdf['fix'].astype('int8')
+        gdf['satellite_count'] = gdf['satellite_count'].astype('uint8')
+        
+        # Append to file
+        if os.path.exists(self.filename):
+            existing_gdf = gpd.read_parquet(self.filename)
+            combined_gdf = pd.concat([existing_gdf, gdf], ignore_index=True)
+            combined_gdf.to_parquet(self.filename)
+        else:
+            gdf.to_parquet(self.filename)
+        
+        print(f"{datetime.now()}: Wrote {len(data_to_write)} RTK data to {self.filename}")
+    
+    def force_write(self):
+        """Manually trigger writing buffered data (useful for shutdown)"""
+        self._write_buffer_to_file()
+
+
 
 # ################################
 # HELPER FUNCTIONS
@@ -307,6 +398,8 @@ def start_serial_reader():
                     gga = parse_gga(line)
                     if gga:
                         latest_gga = gga
+                        # Append to geoparquet logger
+                        logger.append_gps_point(gga['lat'], gga['lon'], gga['fix'], gga['sats'])      
                 
                 # Check if we should send this sentence
                 if should_send_nmea(line):
@@ -325,7 +418,7 @@ def start_serial_reader():
             print("Serial port closed")
 
 # ################################
-# LOGGING
+# CONSOLE LOGGING
 
 def start_position_logger():
     """Log GNSS position every 15 seconds"""
@@ -383,6 +476,7 @@ def signal_handler(signum, frame):
 
 def main():
     """Main function"""
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
@@ -402,4 +496,15 @@ def main():
     start_serial_reader()
 
 if __name__ == "__main__":
+    # initiate geoparquet logger process
+    logger = GPSLogger()
+
+    # Start the main application
     main()
+
+    # try:
+    #     while True:
+    #         time.sleep(1)  # Keep main thread alive
+    # except KeyboardInterrupt:
+    #     print("\nShutting down...")
+    #     logger.force_write()  # Write any remaining buffered data
