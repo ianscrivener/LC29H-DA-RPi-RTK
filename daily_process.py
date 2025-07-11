@@ -57,10 +57,10 @@ def upload_log():
         os.rename(upload_filename, raw_log_path)
 
         # Update upload_filename to point to the new location
-        upload_filename = os.path.join(raw_logs_dir, upload_filename)
+        upload_filepath = os.path.join(raw_logs_dir, upload_filename)
 
         # Upload the renamed log file to S3
-        s3.upload_file(upload_filename, bucket, upload_filename)
+        s3.upload_file(upload_filepath, bucket, upload_filename)
 
         print(f"S3 Uploaded {LOG_FILE} to {bucket} as {upload_filename}")
 
