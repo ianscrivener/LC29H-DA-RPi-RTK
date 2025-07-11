@@ -24,7 +24,7 @@ except ImportError:
 SERIAL_PORT                 = os.getenv('SERIAL_PORT') or os.getenv('UART_PORT') or '/dev/ttyAMA0'
 BAUD_RATE                   = int(os.getenv('BAUD_RATE', '115200'))
 TCP_PORT                    = int(os.getenv('TCP_PORT', '10110'))
-TCP_HOST                    = os.getenv('TCP_HOST', 'localhost')
+TCP_HOST                    = os.getenv('TCP_HOST', '0.0.0.0')  # Listen on all interfaces
 TCP_MAX_CLIENTS             = int(os.getenv('TCP_MAX_CLIENTS', '5'))
 
 TCP_ALLOW                   = os.getenv('TCP_ALLOW', 'RMC,VTG,GGA')
@@ -75,16 +75,19 @@ class LightweightGPSLogger:
         
         print(f"GPS Logger started. Data -> {filename} every {write_interval}s")
 
-    def append_gps_point(self, lat: float, lon: float, fix_quality: int, sat_count: int, gps_time: str = None):
+    def append_gps_point(self, lat: float, lon: float, fix_quality: int, sat_count: int, gps_time: str = None, gps_datetime: str = None):
         """Buffer GPS data point"""
         global utc_date
         
+        # Handle both parameter names for backwards compatibility
+        time_param = gps_time or gps_datetime
+        
         # Create full datetime from UTC date and GPS time
-        if gps_time and len(gps_time) >= 6:
+        if time_param and len(time_param) >= 6:
             try:
-                hours = int(gps_time[:2])
-                minutes = int(gps_time[2:4])
-                seconds = float(gps_time[4:])
+                hours = int(time_param[:2])
+                minutes = int(time_param[2:4])
+                seconds = float(time_param[4:])
                 
                 # Combine UTC date with GPS time
                 dt = datetime.strptime(utc_date, '%Y-%m-%d').replace(
