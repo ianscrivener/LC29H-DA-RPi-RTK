@@ -40,7 +40,7 @@ NTRIP_PASSWORD              = os.getenv('NTRIP_PASSWORD')
 NTRIP_USE_HTTPS             = os.getenv('NTRIP_USE_HTTPS', 'false').lower() == 'true'
 NTRIP_USER_AGENT            = os.getenv('NTRIP_USER_AGENT', 'PythonNTRIPClient')
 
-LOG_FILE                    = os.getenv('LOG_FILE', 'rtk_log.csv')
+TEXT_LOG                    = os.getenv('TEXT_LOG', 'rtk_log.txt')
 LOG_WRITE_PERIOD            = int(os.getenv('LOG_WRITE_PERIOD', '180'))
 
 # ################################
@@ -261,49 +261,86 @@ def start_ntrip_stream():
         return
     
     def ntrip_worker():
-        global ntrip_session
-        
         while not shutdown_event.is_set():
+            ntrip_socket = None
             try:
-                ntrip_session = requests.Session()
+                print(f"Connecting to NTRIP: {NTRIP_HOST}:{NTRIP_PORT}/{NTRIP_MOUNTPOINT}")
                 
-                # Prepare authentication
+                # Create socket connection
+                ntrip_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                ntrip_socket.settimeout(10)
+                ntrip_socket.connect((NTRIP_HOST, NTRIP_PORT))
+                
+                # Prepare HTTP request
                 auth_string = f"{NTRIP_USERNAME}:{NTRIP_PASSWORD}"
                 auth_encoded = base64.b64encode(auth_string.encode()).decode()
                 
-                # Build URL
-                protocol = 'https' if NTRIP_USE_HTTPS else 'http'
-                url = f"{protocol}://{NTRIP_HOST}:{NTRIP_PORT}/{NTRIP_MOUNTPOINT}"
+                request = (
+                    f"GET /{NTRIP_MOUNTPOINT} HTTP/1.0\r\n"
+                    f"User-Agent: {NTRIP_USER_AGENT}\r\n"
+                    f"Authorization: Basic {auth_encoded}\r\n"
+                    f"Accept: */*\r\n"
+                    f"Connection: close\r\n"
+                    f"\r\n"
+                )
                 
-                headers = {
-                    'User-Agent': NTRIP_USER_AGENT,
-                    'Authorization': f'Basic {auth_encoded}'
-                }
+                # Send request
+                ntrip_socket.send(request.encode())
                 
-                print(f"Connecting to NTRIP: {url}")
+                # Read response header
+                response = b""
+                while b"\r\n\r\n" not in response:
+                    data = ntrip_socket.recv(1)
+                    if not data:
+                        raise Exception("Connection closed while reading header")
+                    response += data
                 
-                response = ntrip_session.get(url, headers=headers, stream=True, timeout=10)
-                response.raise_for_status()
+                header = response.decode('utf-8', errors='ignore')
                 
-                print("NTRIP stream connected")
+                # Check for successful response (accept both HTTP 200 and ICY 200)
+                if "200 OK" not in header:
+                    raise Exception(f"NTRIP server returned: {header.split()[0:3]}")
                 
-                for chunk in response.iter_content(chunk_size=1024):
-                    if shutdown_event.is_set():
-                        break
-                    
-                    if chunk and serial_port:
-                        try:
-                            serial_port.write(chunk)
-                        except Exception as e:
-                            print(f"Error writing NTRIP data to serial: {e}")
+                print("NTRIP stream connected successfully")
+                
+                # Set socket to non-blocking for data streaming
+                ntrip_socket.settimeout(1.0)
+                
+                # Stream correction data
+                while not shutdown_event.is_set():
+                    try:
+                        data = ntrip_socket.recv(1024)
+                        if not data:
+                            print("NTRIP stream ended")
                             break
-                            
+                        
+                        # Send correction data to GPS receiver
+                        if serial_port:
+                            try:
+                                serial_port.write(data)
+                            except Exception as e:
+                                print(f"Error writing NTRIP data to serial: {e}")
+                                break
+                                
+                    except socket.timeout:
+                        continue  # Normal timeout, keep trying
+                    except Exception as e:
+                        print(f"Error reading NTRIP data: {e}")
+                        break
+                        
             except Exception as e:
-                print(f"NTRIP error: {e}")
-                time.sleep(5)  # Wait before retry
-        
-        if ntrip_session:
-            ntrip_session.close()
+                print(f"NTRIP connection error: {e}")
+                
+            finally:
+                if ntrip_socket:
+                    try:
+                        ntrip_socket.close()
+                    except:
+                        pass
+                
+                if not shutdown_event.is_set():
+                    print("Retrying NTRIP connection in 10 seconds...")
+                    time.sleep(10)
     
     threading.Thread(target=ntrip_worker, daemon=True).start()
 
@@ -431,7 +468,7 @@ def process_serial_data():
     global latest_gga, latest_rmc, serial_port
     
     # Initialize GPS logger
-    gps_logger = LightweightGPSLogger(LOG_FILE, LOG_WRITE_PERIOD)
+    gps_logger = LightweightGPSLogger(TEXT_LOG, LOG_WRITE_PERIOD)
     
     buffer = ""
     
@@ -523,7 +560,7 @@ def main():
     print("RTK GPS Bridge Starting...")
     print(f"Serial: {SERIAL_PORT} @ {BAUD_RATE} baud")
     print(f"TCP Server: {TCP_HOST}:{TCP_PORT}")
-    print(f"GPS Log: {LOG_FILE}")
+    print(f"GPS Log: {TEXT_LOG}")
     
     # Set up signal handlers
     signal.signal(signal.SIGINT, signal_handler)
