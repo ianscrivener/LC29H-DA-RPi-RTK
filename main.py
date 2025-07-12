@@ -124,6 +124,12 @@ class LightweightGPSLogger:
 
     def _write_buffer_to_file(self):
         """Write buffered data to text file"""
+
+        # If file doesn't exist, write header first
+        if not os.path.exists(self.filename):
+            with open(self.filename, 'w') as f:
+                f.write("gps_datetime,latitude,longitude,fix_quality,satellite_count\n")
+
         with self.buffer_lock:
             if not self.buffer:
                 return
