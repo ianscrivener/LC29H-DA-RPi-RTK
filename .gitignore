@@ -7,3 +7,4 @@ dist/
 Scratch.txt
 rtk_log.txt
 *.log
+function_app/list_bucket_files.sh
