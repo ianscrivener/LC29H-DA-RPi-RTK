@@ -27,7 +27,7 @@ Use named constants for values like buffer sizes (1024), timeouts, etc., for cla
 In LightweightGPSLogger._write_buffer_to_file, if writing fails, you put data back in the buffer. Consider logging the error to a separate file or alerting the user if this happens repeatedly.
 
 #### 6. GPS Data Logging
-The header in the log file includes geometry_wkt, but you do not write this field. Either remove it from the header or add support for WKT geometry.
+~~The header in the log file includes geometry_wkt, but you do not write this field. Either remove it from the header or add support for WKT geometry.~~
 
 
 #### 7. Graceful Shutdown
