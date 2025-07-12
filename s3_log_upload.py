@@ -21,9 +21,7 @@ parsed = urlparse(S3_HOST)
 bucket = S3_BUCKET
 endpoint_url = f"{parsed.scheme}://{parsed.netloc}"
 
-
 print(f"Logging to S3: {endpoint_url}/{bucket} every {S3_SECONDS} seconds")
-
 
 # Create S3 client
 s3 = boto3.client(
