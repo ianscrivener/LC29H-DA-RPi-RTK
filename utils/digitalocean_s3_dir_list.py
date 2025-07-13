@@ -34,7 +34,7 @@ def main():
     List files in the S3 RAW bucket and print their details.
     """
 
-    print(f"Connecting to S3: {endpoint_url}/{S3_BUCKET_RAW}")
+    
 
     try:
         # Create S3 client
@@ -46,11 +46,11 @@ def main():
         )
 
         # list buckets
-        response = s3.list_buckets()
-        print("Buckets:")
+        response = s3.list_objects_v2(Bucket='rtk-logs')
+        print("Objects:")
         for bucket in response['Buckets']:
             print(f"  - {bucket['Name']}")  
-            
+
 
 
     except Exception as e:
