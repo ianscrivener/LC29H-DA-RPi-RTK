@@ -3,7 +3,7 @@ import pynmea2
 import math
 
 # Variables
-TCP_IP          = 'rpi0.local'
+TCP_IP          = 'rpi4.local'
 TCP_PORT        = 10112  
 
 
