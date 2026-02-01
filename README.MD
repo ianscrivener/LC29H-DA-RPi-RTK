@@ -1,6 +1,12 @@
 # RKT Corrections for LC29H(DA)
 
 
+
+## Install dependencies 
+```
+sudo apt install git python3-pip -y
+```
+
 ## Install the python code 
 ```
 cd ~/
