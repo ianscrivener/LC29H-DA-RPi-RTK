@@ -21,7 +21,7 @@ except ImportError:
 
 # ################################
 # VARIABLES
-SERIAL_PORT                 = os.getenv('SERIAL_PORT') or os.getenv('UART_PORT') or '/dev/ttyAMA0'
+SERIAL_PORT                 = os.getenv('SERIAL_PORT') or os.getenv('UART_PORT') or '/dev/ttyS0'
 BAUD_RATE                   = int(os.getenv('BAUD_RATE', '115200'))
 TCP_PORT                    = int(os.getenv('TCP_PORT', '10110'))
 TCP_HOST                    = os.getenv('TCP_HOST', '0.0.0.0')  # Listen on all interfaces
